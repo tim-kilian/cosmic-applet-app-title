@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
-use std::os::{
-    fd::{FromRawFd, RawFd},
-    unix::net::UnixStream,
+use std::{
+    collections::HashSet,
+    os::{
+        fd::{FromRawFd, RawFd},
+        unix::net::UnixStream,
+    },
 };
 
 use cosmic::{
@@ -19,6 +22,8 @@ use cosmic::{
         wayland_client::{
             Connection, QueueHandle, globals::registry_queue_init, protocol::wl_output::WlOutput,
         },
+        wayland_protocols::ext::workspace::v1::client::ext_workspace_handle_v1,
+        workspace::{WorkspaceHandler, WorkspaceState},
     },
     iced::Subscription,
 };
@@ -26,23 +31,24 @@ use futures::{SinkExt, channel::mpsc, executor::block_on};
 use iced_futures::stream;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ActiveWindow {
+pub struct WorkspaceWindow {
     pub title: String,
     pub app_id: Option<String>,
     pub identifier: Option<String>,
+    pub is_active: bool,
 }
 
 #[derive(Debug, Clone)]
 pub enum WaylandUpdate {
-    ActiveWindow(Option<ActiveWindow>),
+    WorkspaceWindows(Vec<WorkspaceWindow>),
     Finished,
 }
 
-pub fn active_window_subscription() -> Subscription<WaylandUpdate> {
+pub fn workspace_windows_subscription() -> Subscription<WaylandUpdate> {
     Subscription::run_with(std::any::TypeId::of::<WaylandUpdate>(), |_| {
         stream::channel(1, move |output: mpsc::Sender<WaylandUpdate>| async move {
             let _ = std::thread::Builder::new()
-                .name("active-window-title-wayland".into())
+                .name("workspace-window-list-wayland".into())
                 .spawn(move || {
                     wayland_event_loop(output.clone());
                 });
@@ -52,14 +58,23 @@ pub fn active_window_subscription() -> Subscription<WaylandUpdate> {
     })
 }
 
+enum OutputScope<'a> {
+    Any,
+    Pending,
+    Specific(&'a WlOutput),
+}
+
 struct AppData {
     tx: mpsc::Sender<WaylandUpdate>,
     registry_state: RegistryState,
+    // Keep outputs before workspaces so workspace state always receives output updates.
     output_state: OutputState,
+    workspace_state: WorkspaceState,
     toplevel_info_state: ToplevelInfoState,
     configured_output: Option<String>,
     expected_output: Option<WlOutput>,
-    last_window: Option<ActiveWindow>,
+    workspaces_ready: bool,
+    last_windows: Vec<WorkspaceWindow>,
 }
 
 impl AppData {
@@ -68,45 +83,113 @@ impl AppData {
         (!value.is_empty()).then(|| value.to_owned())
     }
 
-    fn active_window_for(info: &ToplevelInfo) -> Option<ActiveWindow> {
+    fn window_for(info: &ToplevelInfo) -> Option<WorkspaceWindow> {
         let app_id = Self::trimmed(&info.app_id);
         let title = Self::trimmed(&info.title).or_else(|| app_id.clone())?;
         let identifier = Self::trimmed(&info.identifier);
 
-        Some(ActiveWindow {
+        Some(WorkspaceWindow {
             title,
             app_id,
             identifier,
+            is_active: info
+                .state
+                .contains(&zcosmic_toplevel_handle_v1::State::Activated),
         })
     }
 
-    fn current_window(&self) -> Option<ActiveWindow> {
-        let active: Vec<_> = self
-            .toplevel_info_state
-            .toplevels()
-            .filter(|info| {
-                info.state
-                    .contains(&zcosmic_toplevel_handle_v1::State::Activated)
-            })
-            .collect();
-
-        if let Some(output) = self.expected_output.as_ref() {
-            if let Some(info) = active.iter().find(|info| info.output.contains(output)) {
-                return Self::active_window_for(info);
-            }
+    fn output_scope(&self) -> OutputScope<'_> {
+        match (
+            self.configured_output.as_ref(),
+            self.expected_output.as_ref(),
+        ) {
+            (Some(_), Some(output)) => OutputScope::Specific(output),
+            (Some(_), None) => OutputScope::Pending,
+            (None, _) => OutputScope::Any,
         }
-
-        active.into_iter().find_map(Self::active_window_for)
     }
 
-    fn publish_window(&mut self) {
-        let window = self.current_window();
-        if window == self.last_window {
+    fn matches_output(info: &ToplevelInfo, scope: &OutputScope<'_>) -> bool {
+        match scope {
+            OutputScope::Any => true,
+            OutputScope::Pending => false,
+            OutputScope::Specific(output) => info.output.contains(*output),
+        }
+    }
+
+    fn active_workspaces(
+        &self,
+        scope: &OutputScope<'_>,
+    ) -> HashSet<ext_workspace_handle_v1::ExtWorkspaceHandleV1> {
+        if !self.workspaces_ready {
+            return HashSet::new();
+        }
+
+        self.workspace_state
+            .workspace_groups()
+            .filter(|group| match scope {
+                OutputScope::Any => true,
+                OutputScope::Pending => false,
+                OutputScope::Specific(output) => group
+                    .outputs
+                    .iter()
+                    .any(|group_output| group_output == *output),
+            })
+            .flat_map(|group| group.workspaces.iter())
+            .filter_map(|handle| self.workspace_state.workspace_info(handle))
+            .filter(|workspace| {
+                workspace
+                    .state
+                    .contains(ext_workspace_handle_v1::State::Active)
+            })
+            .map(|workspace| workspace.handle.clone())
+            .collect()
+    }
+
+    fn matches_workspace(
+        info: &ToplevelInfo,
+        active_workspaces: &HashSet<ext_workspace_handle_v1::ExtWorkspaceHandleV1>,
+    ) -> bool {
+        if info
+            .state
+            .contains(&zcosmic_toplevel_handle_v1::State::Sticky)
+        {
+            return true;
+        }
+
+        if active_workspaces.is_empty() {
+            return false;
+        }
+
+        active_workspaces
+            .iter()
+            .any(|workspace| info.workspace.contains(workspace))
+    }
+
+    fn current_windows(&self) -> Vec<WorkspaceWindow> {
+        let output_scope = self.output_scope();
+        if matches!(output_scope, OutputScope::Pending) || !self.workspaces_ready {
+            return Vec::new();
+        }
+
+        let active_workspaces = self.active_workspaces(&output_scope);
+
+        self.toplevel_info_state
+            .toplevels()
+            .filter(|info| Self::matches_output(info, &output_scope))
+            .filter(|info| Self::matches_workspace(info, &active_workspaces))
+            .filter_map(Self::window_for)
+            .collect()
+    }
+
+    fn publish_windows(&mut self) {
+        let windows = self.current_windows();
+        if windows == self.last_windows {
             return;
         }
 
-        self.last_window = window.clone();
-        let _ = block_on(self.tx.send(WaylandUpdate::ActiveWindow(window)));
+        self.last_windows = windows.clone();
+        let _ = block_on(self.tx.send(WaylandUpdate::WorkspaceWindows(windows)));
     }
 
     fn sync_expected_output(&mut self, output: &WlOutput) -> bool {
@@ -158,13 +241,13 @@ impl OutputHandler for AppData {
 
     fn new_output(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>, output: WlOutput) {
         if self.sync_expected_output(&output) {
-            self.publish_window();
+            self.publish_windows();
         }
     }
 
     fn update_output(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>, output: WlOutput) {
         if self.sync_expected_output(&output) {
-            self.publish_window();
+            self.publish_windows();
         }
     }
 
@@ -175,8 +258,19 @@ impl OutputHandler for AppData {
             .is_some_and(|current| current == &output);
         if was_expected {
             self.expected_output = None;
-            self.publish_window();
+            self.publish_windows();
         }
+    }
+}
+
+impl WorkspaceHandler for AppData {
+    fn workspace_state(&mut self) -> &mut WorkspaceState {
+        &mut self.workspace_state
+    }
+
+    fn done(&mut self) {
+        self.workspaces_ready = true;
+        self.publish_windows();
     }
 }
 
@@ -191,7 +285,7 @@ impl ToplevelInfoHandler for AppData {
         _qh: &QueueHandle<Self>,
         _toplevel: &cctk::wayland_protocols::ext::foreign_toplevel_list::v1::client::ext_foreign_toplevel_handle_v1::ExtForeignToplevelHandleV1,
     ) {
-        self.publish_window();
+        self.publish_windows();
     }
 
     fn update_toplevel(
@@ -200,7 +294,7 @@ impl ToplevelInfoHandler for AppData {
         _qh: &QueueHandle<Self>,
         _toplevel: &cctk::wayland_protocols::ext::foreign_toplevel_list::v1::client::ext_foreign_toplevel_handle_v1::ExtForeignToplevelHandleV1,
     ) {
-        self.publish_window();
+        self.publish_windows();
     }
 
     fn toplevel_closed(
@@ -209,11 +303,11 @@ impl ToplevelInfoHandler for AppData {
         _qh: &QueueHandle<Self>,
         _toplevel: &cctk::wayland_protocols::ext::foreign_toplevel_list::v1::client::ext_foreign_toplevel_handle_v1::ExtForeignToplevelHandleV1,
     ) {
-        self.publish_window();
+        self.publish_windows();
     }
 
     fn info_done(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>) {
-        self.publish_window();
+        self.publish_windows();
     }
 }
 
@@ -271,6 +365,8 @@ fn wayland_event_loop(tx: mpsc::Sender<WaylandUpdate>) {
     }
 
     let registry_state = RegistryState::new(&globals);
+    let output_state = OutputState::new(&globals, &qh);
+    let workspace_state = WorkspaceState::new(&registry_state, &qh);
     let Some(toplevel_info_state) = ToplevelInfoState::try_new(&registry_state, &qh) else {
         tracing::error!("The compositor does not expose the toplevel info protocol");
         let _ = block_on(finished_tx.clone().send(WaylandUpdate::Finished));
@@ -279,14 +375,16 @@ fn wayland_event_loop(tx: mpsc::Sender<WaylandUpdate>) {
 
     let mut app_data = AppData {
         tx,
-        output_state: OutputState::new(&globals, &qh),
-        toplevel_info_state,
         registry_state,
+        output_state,
+        workspace_state,
+        toplevel_info_state,
         configured_output: std::env::var("COSMIC_PANEL_OUTPUT")
             .ok()
             .filter(|value| !value.is_empty()),
         expected_output: None,
-        last_window: None,
+        workspaces_ready: false,
+        last_windows: Vec::new(),
     };
 
     loop {
@@ -301,4 +399,5 @@ fn wayland_event_loop(tx: mpsc::Sender<WaylandUpdate>) {
 
 sctk::delegate_output!(AppData);
 sctk::delegate_registry!(AppData);
+cctk::delegate_workspace!(AppData);
 cctk::delegate_toplevel_info!(AppData);

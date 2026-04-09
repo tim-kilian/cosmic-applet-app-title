@@ -1,7 +1,7 @@
-# COSMIC Applet: Active Window Title
+# COSMIC Applet: Workspace Windows
 
-This applet adds a text item to the COSMIC panel and updates it with the title of the currently
-active window on the same output as the panel.
+This applet adds a per-output window list to the COSMIC panel. Each instance shows the windows in
+the currently active workspace for that panel's output, and highlights the active window.
 
 ## Build
 
@@ -24,4 +24,4 @@ pkill -x cosmic-panel
 The install script writes an absolute `Exec=` path into the local desktop file because some COSMIC
 sessions do not include `~/.local/bin` in the panel process `PATH`.
 
-After that, add `Active Window Title` from COSMIC's panel applet settings.
+After that, add `Workspace Windows` from COSMIC's panel applet settings.
