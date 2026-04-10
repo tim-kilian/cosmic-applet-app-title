@@ -17,6 +17,7 @@ permissions:
 env:
   APP_ID: io.github.tkilian.CosmicAppletWorkspaceWindows
   BINARY_NAME: cosmic-applet-workspace-windows
+  PACKAGE_NAME: cosmic-applet-workspace-windows
 
 jobs:
   release:
@@ -70,6 +71,43 @@ jobs:
           echo "version=$version" >>"$GITHUB_OUTPUT"
           echo "archive_base=$archive_base" >>"$GITHUB_OUTPUT"
 
+      - name: Sync Cargo version to release tag
+        env:
+          RELEASE_VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+          import os
+          import re
+
+          version = os.environ["RELEASE_VERSION"]
+          package_name = os.environ["PACKAGE_NAME"]
+
+          cargo_toml = Path("Cargo.toml")
+          cargo_toml_text = cargo_toml.read_text()
+          cargo_toml_text, cargo_toml_count = re.subn(
+              r'(?m)^(version = ")([^"]+)(")$',
+              rf'\g<1>{version}\g<3>',
+              cargo_toml_text,
+              count=1,
+          )
+          if cargo_toml_count != 1:
+              raise SystemExit("failed to update Cargo.toml package version")
+          cargo_toml.write_text(cargo_toml_text)
+
+          cargo_lock = Path("Cargo.lock")
+          cargo_lock_text = cargo_lock.read_text()
+          cargo_lock_text, cargo_lock_count = re.subn(
+              rf'(?ms)(\[\[package\]\]\nname = "{re.escape(package_name)}"\nversion = ")([^"]+)(")',
+              rf'\g<1>{version}\g<3>',
+              cargo_lock_text,
+              count=1,
+          )
+          if cargo_lock_count != 1:
+              raise SystemExit("failed to update Cargo.lock root package version")
+          cargo_lock.write_text(cargo_lock_text)
+          PY
+
       - name: Build release binary
         run: cargo build --locked --release
 
@@ -96,3 +134,85 @@ jobs:
           files: |
             dist/${{ steps.meta.outputs.archive_base }}.tar.gz
             dist/${{ steps.meta.outputs.archive_base }}.sha256
+
+  sync-version:
+    name: Sync version files to default branch
+    if: github.event_name == 'push'
+    needs: release
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Check out default branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+
+      - name: Resolve release metadata
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          tag="${{ github.ref_name }}"
+          if [[ ! "$tag" =~ ^v[0-9] ]]; then
+            echo "Release tag must start with v (got: $tag)." >&2
+            exit 1
+          fi
+
+          version="${tag#v}"
+          echo "tag=$tag" >>"$GITHUB_OUTPUT"
+          echo "version=$version" >>"$GITHUB_OUTPUT"
+
+      - name: Sync Cargo version to release tag
+        env:
+          RELEASE_VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+          import os
+          import re
+
+          version = os.environ["RELEASE_VERSION"]
+          package_name = os.environ["PACKAGE_NAME"]
+
+          cargo_toml = Path("Cargo.toml")
+          cargo_toml_text = cargo_toml.read_text()
+          cargo_toml_text, cargo_toml_count = re.subn(
+              r'(?m)^(version = ")([^"]+)(")$',
+              rf'\g<1>{version}\g<3>',
+              cargo_toml_text,
+              count=1,
+          )
+          if cargo_toml_count != 1:
+              raise SystemExit("failed to update Cargo.toml package version")
+          cargo_toml.write_text(cargo_toml_text)
+
+          cargo_lock = Path("Cargo.lock")
+          cargo_lock_text = cargo_lock.read_text()
+          cargo_lock_text, cargo_lock_count = re.subn(
+              rf'(?ms)(\[\[package\]\]\nname = "{re.escape(package_name)}"\nversion = ")([^"]+)(")',
+              rf'\g<1>{version}\g<3>',
+              cargo_lock_text,
+              count=1,
+          )
+          if cargo_lock_count != 1:
+              raise SystemExit("failed to update Cargo.lock root package version")
+          cargo_lock.write_text(cargo_lock_text)
+          PY
+
+      - name: Commit version bump
+        env:
+          RELEASE_VERSION: ${{ steps.meta.outputs.version }}
+          TARGET_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+
+          if git diff --quiet -- Cargo.toml Cargo.lock; then
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Cargo.toml Cargo.lock
+          git commit -m "chore: set crate version to ${RELEASE_VERSION}"
+          git push origin "HEAD:${TARGET_BRANCH}"
