@@ -57,6 +57,7 @@ pub struct WorkspaceWindow {
     pub identifier: Option<String>,
     pub geometry: Option<WindowGeometry>,
     pub is_active: bool,
+    pub is_minimized: bool,
     pub is_maximized: bool,
     pub is_sticky: bool,
 }
@@ -202,6 +203,9 @@ impl AppData {
             is_active: info
                 .state
                 .contains(&zcosmic_toplevel_handle_v1::State::Activated),
+            is_minimized: info
+                .state
+                .contains(&zcosmic_toplevel_handle_v1::State::Minimized),
             is_maximized: info
                 .state
                 .contains(&zcosmic_toplevel_handle_v1::State::Maximized),

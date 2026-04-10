@@ -78,6 +78,7 @@ struct DisplayWindow {
     title: String,
     icon: Option<widget::icon::Handle>,
     is_active: bool,
+    is_minimized: bool,
     is_maximized: bool,
     is_sticky: bool,
 }
@@ -531,6 +532,7 @@ impl Applet {
             title: window.title.clone(),
             icon,
             is_active: window.is_active,
+            is_minimized: window.is_minimized,
             is_maximized: window.is_maximized,
             is_sticky: window.is_sticky,
         }
@@ -638,11 +640,21 @@ impl Applet {
         let minimize_handle = window.handle.clone();
         let maximize_handle = window.handle.clone();
         let close_handle = window.handle.clone();
+        let minimize_icon = if window.is_minimized {
+            "window-restore-symbolic"
+        } else {
+            "window-minimize-symbolic"
+        };
+        let minimize_message = if window.is_minimized {
+            Message::FocusWindow(minimize_handle)
+        } else {
+            Message::MinimizeWindow(minimize_handle)
+        };
 
         row![
             Self::context_menu_window_control(
-                "window-minimize-symbolic",
-                Message::MinimizeWindow(minimize_handle),
+                minimize_icon,
+                minimize_message,
                 window.is_active,
                 8,
             ),
