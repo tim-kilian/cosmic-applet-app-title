@@ -113,7 +113,6 @@ enum WindowControlAction {
 enum DeferredMenuAction {
     FocusWindow(ExtForeignToplevelHandleV1),
     LaunchDesktopAction(WindowMenuAction),
-    OpenSettings,
     WindowControl(WindowControlAction),
 }
 
@@ -163,7 +162,6 @@ enum Message {
     SetLimitTileSize(bool),
     MinimizeWindow(ExtForeignToplevelHandleV1),
     OpenWindowContextMenu(ExtForeignToplevelHandleV1),
-    OpenSettingsPopup,
     PopupClosed(window::Id),
     PressWindow(ExtForeignToplevelHandleV1),
     ReleasePointer,
@@ -584,7 +582,6 @@ impl Applet {
             DeferredMenuAction::LaunchDesktopAction(action) => {
                 Self::launch_window_action_task(action)
             }
-            DeferredMenuAction::OpenSettings => self.open_settings_task(),
             DeferredMenuAction::WindowControl(action) => {
                 Self::perform_window_control(action);
                 app::Task::none()
@@ -1185,14 +1182,6 @@ impl Applet {
             );
         }
 
-        items.push(widget::divider::horizontal::light().into());
-        let settings = menu::menu_button(vec![
-            Self::context_menu_label("Workspace Windows Settings"),
-            space::horizontal().width(Length::Fill).into(),
-        ])
-        .on_press(Message::OpenSettingsPopup);
-        items.push(settings.into());
-
         let content = container(
             widget::column::with_children(items)
                 .width(Length::Fill)
@@ -1361,40 +1350,6 @@ impl Applet {
 
             Message::DesktopActionFinished
         })
-    }
-
-    fn open_settings_task(&self) -> app::Task<Message> {
-        surface_task(app_popup::<Applet>(
-            |state: &mut Applet| {
-                let new_id = window::Id::unique();
-                state.settings_popup = Some(new_id);
-
-                let mut popup_settings = state.core.applet.get_popup_settings(
-                    state
-                        .core
-                        .main_window_id()
-                        .expect("applet main window missing"),
-                    new_id,
-                    None,
-                    None,
-                    None,
-                );
-
-                if let Some(position) = state.cursor_in_applet {
-                    popup_settings.positioner.anchor_rect = iced::Rectangle {
-                        x: position.x.round() as i32,
-                        y: position.y.round() as i32,
-                        width: 1,
-                        height: 1,
-                    };
-                }
-
-                popup_settings
-            },
-            Some(Box::new(|state: &Applet| {
-                state.settings_panel().map(cosmic::Action::App)
-            })),
-        ))
     }
 
     fn window_tile(&self, window: &DisplayWindow, icon_size: f32) -> Element<'_, Message> {
@@ -1633,13 +1588,6 @@ impl cosmic::Application for Applet {
 
                 self.context_menu_window = Some(handle);
                 return self.open_context_menu_task();
-            }
-            Message::OpenSettingsPopup => {
-                if self.settings_popup.is_some() {
-                    return app::Task::none();
-                }
-
-                return self.queue_or_run_menu_action(DeferredMenuAction::OpenSettings);
             }
             Message::RunWindowAction(action) => {
                 return self

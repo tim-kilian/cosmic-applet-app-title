@@ -28,7 +28,7 @@ pub struct AppletConfig {
 impl Default for AppletConfig {
     fn default() -> Self {
         Self {
-            limit_tile_size: true,
+            limit_tile_size: false,
             max_title_chars: DEFAULT_TITLE_CHARS,
             middle_click_closes: true,
             show_app_icons: true,
@@ -91,6 +91,9 @@ impl AppletConfig {
     }
 
     pub fn normalized(mut self) -> Self {
+        self.limit_tile_size = false;
+        self.middle_click_closes = true;
+        self.show_app_icons = true;
         self.max_title_chars = self.max_title_chars.clamp(MIN_TITLE_CHARS, MAX_TITLE_CHARS);
         self
     }
