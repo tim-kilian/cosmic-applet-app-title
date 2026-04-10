@@ -879,7 +879,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "cosmic-applet-app-title"
+name = "cosmic-applet-workspace-windows"
 version = "0.1.0"
 dependencies = [
  "dirs",

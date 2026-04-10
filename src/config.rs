@@ -8,7 +8,8 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-const CONFIG_DIR_NAME: &str = "io.github.tkilian.CosmicAppletAppTitle";
+const CONFIG_DIR_NAME: &str = "io.github.tkilian.CosmicAppletWorkspaceWindows";
+const LEGACY_CONFIG_DIR_NAME: &str = "io.github.tkilian.CosmicAppletAppTitle";
 const CONFIG_FILE_NAME: &str = "config.toml";
 
 pub const DEFAULT_TITLE_CHARS: usize = 24;
@@ -39,28 +40,34 @@ impl Default for AppletConfig {
 
 impl AppletConfig {
     pub fn load() -> Self {
-        let Some(path) = config_path() else {
-            return Self::default();
-        };
-
-        match fs::read_to_string(&path) {
-            Ok(contents) => match toml::from_str::<Self>(&contents) {
-                Ok(config) => config.normalized(),
+        for path in [
+            config_path(CONFIG_DIR_NAME),
+            config_path(LEGACY_CONFIG_DIR_NAME),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            match fs::read_to_string(&path) {
+                Ok(contents) => match toml::from_str::<Self>(&contents) {
+                    Ok(config) => return config.normalized(),
+                    Err(err) => {
+                        tracing::warn!("Failed to parse config at {}: {err}", path.display());
+                        return Self::default();
+                    }
+                },
+                Err(err) if err.kind() == ErrorKind::NotFound => {}
                 Err(err) => {
-                    tracing::warn!("Failed to parse config at {}: {err}", path.display());
-                    Self::default()
+                    tracing::warn!("Failed to read config at {}: {err}", path.display());
+                    return Self::default();
                 }
-            },
-            Err(err) if err.kind() == ErrorKind::NotFound => Self::default(),
-            Err(err) => {
-                tracing::warn!("Failed to read config at {}: {err}", path.display());
-                Self::default()
             }
         }
+
+        Self::default()
     }
 
     pub fn save(&self) {
-        let Some(path) = config_path() else {
+        let Some(path) = config_path(CONFIG_DIR_NAME) else {
             return;
         };
 
@@ -99,9 +106,9 @@ impl AppletConfig {
     }
 }
 
-fn config_path() -> Option<PathBuf> {
+fn config_path(dir_name: &str) -> Option<PathBuf> {
     let mut path = dirs::config_dir()?;
-    path.push(Path::new(CONFIG_DIR_NAME));
+    path.push(Path::new(dir_name));
     path.push(Path::new(CONFIG_FILE_NAME));
     Some(path)
 }

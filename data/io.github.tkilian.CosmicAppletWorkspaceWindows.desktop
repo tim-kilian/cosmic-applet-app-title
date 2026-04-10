@@ -2,11 +2,11 @@
 Name=Workspace Windows
 Comment=Show windows from the current workspace in the COSMIC panel
 Type=Application
-Exec=cosmic-applet-app-title
+Exec=cosmic-applet-workspace-windows
 Terminal=false
 Categories=COSMIC;
 Keywords=COSMIC;Applet;Window;Title;Workspace;
-Icon=io.github.tkilian.CosmicAppletAppTitle
+Icon=io.github.tkilian.CosmicAppletWorkspaceWindows
 StartupNotify=true
 NoDisplay=true
 X-CosmicApplet=true

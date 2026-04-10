@@ -35,7 +35,7 @@ use wayland::{
     set_window_maximized, workspace_windows_subscription,
 };
 
-const APP_ID: &str = "io.github.tkilian.CosmicAppletAppTitle";
+const APP_ID: &str = "io.github.tkilian.CosmicAppletWorkspaceWindows";
 const EMPTY_TITLE: &str = "Desktop";
 const CONTEXT_MENU_WIDTH: f32 = 320.0;
 const DRAG_THRESHOLD: f32 = 8.0;

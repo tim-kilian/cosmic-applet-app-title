@@ -15,8 +15,8 @@ permissions:
   contents: write
 
 env:
-  APP_ID: io.github.tkilian.CosmicAppletAppTitle
-  BINARY_NAME: cosmic-applet-app-title
+  APP_ID: io.github.tkilian.CosmicAppletWorkspaceWindows
+  BINARY_NAME: cosmic-applet-workspace-windows
 
 jobs:
   release:

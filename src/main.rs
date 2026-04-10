@@ -8,7 +8,7 @@ fn main() -> cosmic::iced::Result {
         .init();
     let _ = tracing_log::LogTracer::init();
 
-    tracing::info!("Starting active window title applet with version {VERSION}");
+    tracing::info!("Starting workspace windows applet with version {VERSION}");
 
-    cosmic_applet_app_title::run()
+    cosmic_applet_workspace_windows::run()
 }
