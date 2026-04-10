@@ -18,6 +18,7 @@ pub const MAX_TITLE_CHARS: usize = 64;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AppletConfig {
+    pub limit_tile_size: bool,
     pub max_title_chars: usize,
     pub middle_click_closes: bool,
     pub show_app_icons: bool,
@@ -27,6 +28,7 @@ pub struct AppletConfig {
 impl Default for AppletConfig {
     fn default() -> Self {
         Self {
+            limit_tile_size: true,
             max_title_chars: DEFAULT_TITLE_CHARS,
             middle_click_closes: true,
             show_app_icons: true,

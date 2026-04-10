@@ -126,6 +126,7 @@ enum Message {
     CloseWindow(ExtForeignToplevelHandleV1),
     DesktopActionFinished,
     HoverWindow(ExtForeignToplevelHandleV1),
+    SetLimitTileSize(bool),
     MinimizeWindow(ExtForeignToplevelHandleV1),
     OpenWindowContextMenu(ExtForeignToplevelHandleV1),
     OpenSettingsPopup,
@@ -154,7 +155,11 @@ impl Applet {
     }
 
     fn max_chars(&self) -> usize {
-        self.config.max_title_chars
+        if self.config.limit_tile_size {
+            self.config.max_title_chars
+        } else {
+            usize::MAX
+        }
     }
 
     fn tag_radius(theme: &theme::Theme) -> iced::border::Radius {
@@ -730,31 +735,40 @@ impl Applet {
     }
 
     fn settings_panel(&self) -> Element<'_, Message> {
+        let mut display_section = widget::settings::section()
+            .title("Display")
+            .add(
+                widget::settings::item::builder("Show application icons")
+                    .description("Display the desktop icon before each window title.")
+                    .toggler(self.config.show_app_icons, Message::SetShowAppIcons),
+            )
+            .add(
+                widget::settings::item::builder("Limit tile size")
+                    .description("Truncate long window titles so each tile stays capped.")
+                    .toggler(self.config.limit_tile_size, Message::SetLimitTileSize),
+            );
+
+        if self.config.limit_tile_size {
+            display_section = display_section.add(
+                widget::settings::item::builder("Maximum title length")
+                    .description("Limit how many characters each window title can use.")
+                    .control(widget::spin_button(
+                        self.config.max_title_chars.to_string(),
+                        self.config.max_title_chars,
+                        1,
+                        MIN_TITLE_CHARS,
+                        MAX_TITLE_CHARS,
+                        Message::SetMaxTitleChars,
+                    )),
+            );
+        }
+
         let content = widget::container(
             widget::settings::view_column(vec![
                 widget::text::title4("Workspace Windows").into(),
                 widget::text::caption("Changes apply immediately and are saved automatically.")
                     .into(),
-                widget::settings::section()
-                    .title("Display")
-                    .add(
-                        widget::settings::item::builder("Show application icons")
-                            .description("Display the desktop icon before each window title.")
-                            .toggler(self.config.show_app_icons, Message::SetShowAppIcons),
-                    )
-                    .add(
-                        widget::settings::item::builder("Maximum title length")
-                            .description("Limit how many characters each window title can use.")
-                            .control(widget::spin_button(
-                                self.config.max_title_chars.to_string(),
-                                self.config.max_title_chars,
-                                1,
-                                MIN_TITLE_CHARS,
-                                MAX_TITLE_CHARS,
-                                Message::SetMaxTitleChars,
-                            )),
-                    )
-                    .into(),
+                display_section.into(),
                 widget::settings::section()
                     .title("Actions")
                     .add(
@@ -1156,6 +1170,12 @@ impl cosmic::Application for Applet {
                 }
 
                 self.hovered_window = Some(handle);
+            }
+            Message::SetLimitTileSize(value) => {
+                if self.config.limit_tile_size != value {
+                    self.config.limit_tile_size = value;
+                    self.config_dirty = true;
+                }
             }
             Message::MinimizeWindow(handle) => {
                 return self.queue_or_run_menu_action(DeferredMenuAction::WindowControl(
