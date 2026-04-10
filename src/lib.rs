@@ -157,6 +157,10 @@ impl Applet {
         self.config.max_title_chars
     }
 
+    fn tag_radius(theme: &theme::Theme) -> iced::border::Radius {
+        theme.cosmic().radius_xl().into()
+    }
+
     fn resolve_desktop_entry(&mut self, window: &WorkspaceWindow) -> Option<fde::DesktopEntry> {
         let app_id = window.app_id.as_deref().or(window.identifier.as_deref())?;
 
@@ -1021,7 +1025,7 @@ impl Applet {
                     text_color: Some(foreground),
                     background: Some(iced::Background::Color(background)),
                     border: iced::Border {
-                        radius: cosmic.corner_radii.radius_s.into(),
+                        radius: Self::tag_radius(theme),
                         color: border_color,
                         width: border_width,
                         ..Default::default()
@@ -1061,7 +1065,7 @@ impl Applet {
                     text_color: Some(foreground),
                     background: Some(iced::Background::Color(background)),
                     border: iced::Border {
-                        radius: cosmic.corner_radii.radius_s.into(),
+                        radius: Self::tag_radius(theme),
                         ..Default::default()
                     },
                     shadow: Default::default(),
