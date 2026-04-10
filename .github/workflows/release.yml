@@ -1,0 +1,98 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to release, for example v0.1.0
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  APP_ID: io.github.tkilian.CosmicAppletAppTitle
+  BINARY_NAME: cosmic-applet-app-title
+
+jobs:
+  release:
+    name: Build and publish release
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Check out sources
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            pkg-config \
+            libasound2-dev \
+            libdbus-1-dev \
+            libegl1-mesa-dev \
+            libfontconfig1-dev \
+            libfreetype6-dev \
+            libudev-dev \
+            libwayland-dev \
+            libxkbcommon-dev
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Resolve release metadata
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          tag="${{ github.event.inputs.tag || github.ref_name }}"
+          if [[ ! "$tag" =~ ^v[0-9] ]]; then
+            echo "Release tag must start with v (got: $tag)." >&2
+            exit 1
+          fi
+
+          version="${tag#v}"
+          archive_base="${BINARY_NAME}-${version}-linux-x86_64"
+
+          echo "tag=$tag" >>"$GITHUB_OUTPUT"
+          echo "version=$version" >>"$GITHUB_OUTPUT"
+          echo "archive_base=$archive_base" >>"$GITHUB_OUTPUT"
+
+      - name: Build release binary
+        run: cargo build --locked --release
+
+      - name: Assemble release archive
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          archive_root="dist/${{ steps.meta.outputs.archive_base }}"
+
+          install -Dm755 "target/release/${BINARY_NAME}" "$archive_root/bin/${BINARY_NAME}"
+          install -Dm644 "data/${APP_ID}.desktop" "$archive_root/share/applications/${APP_ID}.desktop"
+          install -Dm644 "data/icons/scalable/apps/${APP_ID}.svg" "$archive_root/share/icons/hicolor/scalable/apps/${APP_ID}.svg"
+          install -Dm644 README.md "$archive_root/README.md"
+
+          tar -C dist -czf "dist/${{ steps.meta.outputs.archive_base }}.tar.gz" "${{ steps.meta.outputs.archive_base }}"
+          sha256sum "dist/${{ steps.meta.outputs.archive_base }}.tar.gz" >"dist/${{ steps.meta.outputs.archive_base }}.sha256"
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          generate_release_notes: true
+          files: |
+            dist/${{ steps.meta.outputs.archive_base }}.tar.gz
+            dist/${{ steps.meta.outputs.archive_base }}.sha256
