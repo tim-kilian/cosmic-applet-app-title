@@ -21,7 +21,9 @@ use cosmic::{
         resolve_desktop_entry, spawn_desktop_exec,
     },
     iced::{
-        self, Alignment, Length, Subscription, event, mouse,
+        self, Alignment, Length, Subscription,
+        advanced::text::EllipsizeHeightLimit,
+        event, mouse,
         widget::{row, space},
         window,
     },
@@ -244,6 +246,40 @@ impl Applet {
         let label_len = format!("+{hidden_count}").chars().count() as f32;
         (TILE_HORIZONTAL_PADDING * 2.0 + 2.0 + label_len * Self::estimated_char_width(icon_size))
             .max(TILE_MIN_ESTIMATED_WIDTH)
+    }
+
+    fn tile_text_width(&self, window: &DisplayWindow, icon_size: f32) -> f32 {
+        let width = if self.core.applet.is_horizontal() {
+            let mut width =
+                self.estimated_tile_width(window, icon_size) - TILE_HORIZONTAL_PADDING * 2.0 - 2.0;
+
+            if window.icon.is_some() {
+                width -= icon_size + TILE_INNER_SPACING;
+            }
+
+            width
+        } else {
+            let (horizontal_padding, _) = self.panel_padding();
+            (self.core.applet.suggested_size(true).0 + 2 * horizontal_padding) as f32
+                - TILE_HORIZONTAL_PADDING * 2.0
+                - 2.0
+        };
+
+        width.max(1.0)
+    }
+
+    fn window_tile_label(&self, window: &DisplayWindow, icon_size: f32) -> Element<'_, Message> {
+        container(
+            self.core
+                .applet
+                .text(self.displayed_title(&window.title))
+                .wrapping(iced::widget::text::Wrapping::None)
+                .ellipsize(iced::widget::text::Ellipsize::End(
+                    EllipsizeHeightLimit::Lines(1),
+                )),
+        )
+        .max_width(self.tile_text_width(window, icon_size))
+        .into()
     }
 
     fn available_strip_width(&self) -> Option<f32> {
@@ -552,26 +588,32 @@ impl Applet {
     }
 
     fn passive_tile(&self, label: impl Into<String>) -> Element<'_, Message> {
-        container(self.core.applet.text(label.into()))
-            .padding([2, 8])
-            .class(theme::Container::custom(move |theme| {
-                let cosmic = theme.cosmic();
-                let background = cosmic.background.component.base.into();
-                let foreground = cosmic.background.component.on.into();
+        container(
+            self.core
+                .applet
+                .text(label.into())
+                .wrapping(iced::widget::text::Wrapping::None),
+        )
+        .padding([2, 8])
+        .clip(true)
+        .class(theme::Container::custom(move |theme| {
+            let cosmic = theme.cosmic();
+            let background = cosmic.background.component.base.into();
+            let foreground = cosmic.background.component.on.into();
 
-                container::Style {
-                    icon_color: Some(foreground),
-                    text_color: Some(foreground),
-                    background: Some(iced::Background::Color(background)),
-                    border: iced::Border {
-                        radius: Self::tag_radius(theme),
-                        ..Default::default()
-                    },
-                    shadow: Default::default(),
-                    snap: true,
-                }
-            }))
-            .into()
+            container::Style {
+                icon_color: Some(foreground),
+                text_color: Some(foreground),
+                background: Some(iced::Background::Color(background)),
+                border: iced::Border {
+                    radius: Self::tag_radius(theme),
+                    ..Default::default()
+                },
+                shadow: Default::default(),
+                snap: true,
+            }
+        }))
+        .into()
     }
 
     fn overflow_tile(
@@ -1403,7 +1445,7 @@ impl Applet {
         }
 
         if !self.is_side_panel() || window.icon.is_none() {
-            content = content.push(self.core.applet.text(self.displayed_title(&window.title)));
+            content = content.push(self.window_tile_label(window, icon_size));
         }
 
         let is_active = window.is_active;
@@ -1419,61 +1461,63 @@ impl Applet {
         let hover_handle = handle.clone();
         let hover_move_handle = handle.clone();
         let context_handle = handle.clone();
-        let preview = container(content)
-            .padding([2, 8])
-            .class(theme::Container::custom(move |theme| {
-                let cosmic = theme.cosmic();
-                let highlight = is_hovered || is_dragging;
-                let (background, foreground, border_color, border_width) = if is_active {
-                    (
-                        if highlight {
-                            cosmic.accent_button.hover.into()
-                        } else {
-                            cosmic.accent_button.base.into()
-                        },
-                        cosmic.accent_button.on.into(),
-                        if is_dragging {
-                            cosmic.accent.base.into()
-                        } else if is_hovered {
-                            cosmic.accent.base.into()
-                        } else {
-                            iced::Color::TRANSPARENT
-                        },
-                        if highlight { 1.0 } else { 0.0 },
-                    )
-                } else {
-                    (
-                        if highlight {
-                            cosmic.background.component.hover.into()
-                        } else {
-                            cosmic.background.component.base.into()
-                        },
-                        cosmic.background.component.on.into(),
-                        if is_dragging {
-                            cosmic.accent.base.into()
-                        } else if is_hovered {
-                            cosmic.bg_divider().into()
-                        } else {
-                            iced::Color::TRANSPARENT
-                        },
-                        if highlight { 1.0 } else { 0.0 },
-                    )
-                };
+        let preview =
+            container(content)
+                .padding([2, 8])
+                .clip(true)
+                .class(theme::Container::custom(move |theme| {
+                    let cosmic = theme.cosmic();
+                    let highlight = is_hovered || is_dragging;
+                    let (background, foreground, border_color, border_width) = if is_active {
+                        (
+                            if highlight {
+                                cosmic.accent_button.hover.into()
+                            } else {
+                                cosmic.accent_button.base.into()
+                            },
+                            cosmic.accent_button.on.into(),
+                            if is_dragging {
+                                cosmic.accent.base.into()
+                            } else if is_hovered {
+                                cosmic.accent.base.into()
+                            } else {
+                                iced::Color::TRANSPARENT
+                            },
+                            if highlight { 1.0 } else { 0.0 },
+                        )
+                    } else {
+                        (
+                            if highlight {
+                                cosmic.background.component.hover.into()
+                            } else {
+                                cosmic.background.component.base.into()
+                            },
+                            cosmic.background.component.on.into(),
+                            if is_dragging {
+                                cosmic.accent.base.into()
+                            } else if is_hovered {
+                                cosmic.bg_divider().into()
+                            } else {
+                                iced::Color::TRANSPARENT
+                            },
+                            if highlight { 1.0 } else { 0.0 },
+                        )
+                    };
 
-                container::Style {
-                    icon_color: Some(foreground),
-                    text_color: Some(foreground),
-                    background: Some(iced::Background::Color(background)),
-                    border: iced::Border {
-                        radius: Self::tag_radius(theme),
-                        color: border_color,
-                        width: border_width,
-                        ..Default::default()
-                    },
-                    shadow: Default::default(),
-                    snap: true,
-                }
-            }));
+                    container::Style {
+                        icon_color: Some(foreground),
+                        text_color: Some(foreground),
+                        background: Some(iced::Background::Color(background)),
+                        border: iced::Border {
+                            radius: Self::tag_radius(theme),
+                            color: border_color,
+                            width: border_width,
+                            ..Default::default()
+                        },
+                        shadow: Default::default(),
+                        snap: true,
+                    }
+                }));
 
         let tile = widget::mouse_area(preview)
             .interaction(mouse::Interaction::Idle)
