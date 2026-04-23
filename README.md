@@ -15,6 +15,29 @@ Example applet layout in the COSMIC panel:
 cargo build --release
 ```
 
+## Flatpak
+
+Generate Rust dependency sources:
+
+```bash
+just flatpak-sources
+```
+
+Build a local Flatpak repo and bundle:
+
+```bash
+just flatpak-build
+```
+
+Publish a local Flatpak repo with static deltas and a commit-pinned submission manifest:
+
+```bash
+just flatpak-publish
+```
+
+The publish step writes the generated bundle to the repository root, the local repo to `repo/`,
+and the commit-pinned manifest to `.flatpak-builder/`.
+
 ## Install locally
 
 ```bash

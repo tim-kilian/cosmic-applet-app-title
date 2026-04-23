@@ -6,6 +6,15 @@ default:
 build:
     cargo build --release
 
+flatpak-sources:
+    ./build-flatpak.sh sources
+
+flatpak-build:
+    ./build-flatpak.sh build
+
+flatpak-publish:
+    ./build-flatpak.sh publish
+
 install: build
     ./scripts/install-local.sh
 

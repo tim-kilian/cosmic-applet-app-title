@@ -1,5 +1,6 @@
 {
   "app-id": "io.github.tkilian.CosmicAppletWorkspaceWindows",
+  "branch": "stable",
   "runtime": "org.freedesktop.Platform",
   "runtime-version": "24.08",
   "sdk": "org.freedesktop.Sdk",
@@ -10,41 +11,39 @@
   "finish-args": [
     "--share=ipc",
     "--socket=wayland",
-    "--socket=pulseaudio",
     "--device=dri",
-    "--share=network",
-    "--filesystem=xdg-config:ro",
-    "--filesystem=xdg-data:ro",
     "--filesystem=xdg-config:rw",
-    "--talk-name=org.freedesktop.Notifications",
-    "--own-name=io.github.tkilian.*",
+    "--filesystem=xdg-data:ro",
     "--env=XDG_CURRENT_DESKTOP=cosmic",
-    "--env=COSMIC_PANEL_OUTPUT=",
-    "--env=http_proxy=",
-    "--env=https_proxy="
+    "--env=COSMIC_PANEL_OUTPUT="
   ],
-  "build-options": {
-    "append-path": "/usr/lib/sdk/rust-stable/bin",
-    "env": {
-      "CARGO_HOME": "/run/build/cosmic-applet-workspace-windows/cargo",
-      "RUST_BACKTRACE": "1"
-    }
-  },
   "modules": [
     {
       "name": "cosmic-applet-workspace-windows",
       "buildsystem": "simple",
+      "build-options": {
+        "append-path": "/usr/lib/sdk/rust-stable/bin",
+        "env": {
+          "CARGO_HOME": "/run/build/cosmic-applet-workspace-windows/cargo",
+          "CARGO_NET_OFFLINE": "true",
+          "RUST_BACKTRACE": "1"
+        }
+      },
       "build-commands": [
+        "install -Dm644 cargo/config .cargo/config.toml",
+        "cargo --offline fetch --manifest-path Cargo.toml --verbose",
         "cargo build --release --offline --locked",
         "install -Dm755 target/release/cosmic-applet-workspace-windows /app/bin/cosmic-applet-workspace-windows",
         "install -Dm644 data/io.github.tkilian.CosmicAppletWorkspaceWindows.desktop /app/share/applications/io.github.tkilian.CosmicAppletWorkspaceWindows.desktop",
+        "install -Dm644 data/io.github.tkilian.CosmicAppletWorkspaceWindows.metainfo.xml /app/share/metainfo/io.github.tkilian.CosmicAppletWorkspaceWindows.metainfo.xml",
         "install -Dm644 data/icons/scalable/apps/io.github.tkilian.CosmicAppletWorkspaceWindows.svg /app/share/icons/hicolor/scalable/apps/io.github.tkilian.CosmicAppletWorkspaceWindows.svg"
       ],
       "sources": [
         {
           "type": "dir",
           "path": "."
-        }
+        },
+        "cargo-sources.json"
       ]
     }
   ]
