@@ -29,14 +29,22 @@ Build a local Flatpak repo and bundle:
 just flatpak-build
 ```
 
-Publish a local Flatpak repo with static deltas and a commit-pinned submission manifest:
+Publish a local Flatpak repo with static deltas:
 
 ```bash
 just flatpak-publish
 ```
 
-The publish step writes the generated bundle to the repository root, the local repo to `repo/`,
-and the commit-pinned manifest to `.flatpak-builder/`.
+The publish step writes the generated bundle to the repository root and the local repo to `repo/`.
+If the git worktree is clean, it also writes a commit-pinned submission manifest to `.flatpak-builder/`.
+
+To generate only the commit-pinned submission manifest:
+
+```bash
+./build-flatpak.sh manifest
+```
+
+That manifest step requires a clean git worktree.
 
 ## Install locally
 

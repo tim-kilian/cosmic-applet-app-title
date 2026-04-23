@@ -24,8 +24,8 @@ require_cmd() {
     fi
 }
 
-ensure_flatpak_builder() {
-    require_cmd flatpak-builder
+has_flatpak_builder() {
+    command -v flatpak-builder >/dev/null 2>&1
 }
 
 ensure_cargo_generator() {
@@ -85,6 +85,11 @@ stage_manifest_support_files() {
     cp "$CARGO_SOURCES" "${STATE_DIR}/cargo-sources.json"
 }
 
+git_worktree_clean() {
+    require_cmd git
+    [[ -z "$(git -C "$SCRIPT_DIR" status --porcelain)" ]]
+}
+
 write_local_manifest() {
     stage_manifest_support_files
     python3 - "$MANIFEST" "$LOCAL_MANIFEST" "$LOCAL_SOURCE_DIR" <<'PY'
@@ -103,12 +108,11 @@ PY
 }
 
 write_publish_manifest() {
-    require_cmd git
     stage_manifest_support_files
 
-    if [[ -n "$(git -C "$SCRIPT_DIR" status --porcelain)" ]]; then
+    if ! git_worktree_clean; then
         echo "Refusing to generate a publish manifest from a dirty worktree." >&2
-        exit 1
+        return 1
     fi
 
     python3 - "$MANIFEST" "$PUBLISH_MANIFEST" \
@@ -138,21 +142,107 @@ if tag:
 
 manifest = json.loads(manifest_path.read_text())
 manifest["modules"][0]["sources"][0] = source
-output_path.write_text(json.dumps(manifest, indent=2) + "\n")
+    output_path.write_text(json.dumps(manifest, indent=2) + "\n")
 PY
+}
+
+read_manifest_metadata() {
+    python3 - "$MANIFEST" <<'PY'
+import json
+import sys
+
+manifest = json.load(open(sys.argv[1]))
+print(manifest["runtime"])
+print(manifest["runtime-version"])
+print(manifest["sdk"])
+print(manifest["command"])
+PY
+}
+
+read_finish_args() {
+    python3 - "$MANIFEST" <<'PY'
+import json
+import sys
+
+manifest = json.load(open(sys.argv[1]))
+for arg in manifest.get("finish-args", []):
+    print(arg)
+PY
+}
+
+build_bundle_with_builder() {
+    local manifest_path="$1"
+
+    echo "=== Building Flatpak with flatpak-builder ==="
+    rm -rf "$BUILD_DIR"
+    rm -rf "$REPO_DIR"
+    mkdir -p "$REPO_DIR"
+    flatpak-builder --force-clean --repo="$REPO_DIR" "$BUILD_DIR" "$manifest_path"
+}
+
+build_bundle_manually() {
+    local arch runtime runtime_version sdk command
+    local -a manifest_metadata finish_args
+
+    require_cmd cargo
+    require_cmd flatpak
+
+    mapfile -t manifest_metadata < <(read_manifest_metadata)
+    runtime="${manifest_metadata[0]}"
+    runtime_version="${manifest_metadata[1]}"
+    sdk="${manifest_metadata[2]}"
+    command="${manifest_metadata[3]}"
+    arch="$(flatpak --default-arch 2>/dev/null || echo x86_64)"
+
+    mapfile -t finish_args < <(read_finish_args)
+
+    echo "=== flatpak-builder not found; using manual local Flatpak build ==="
+    echo "=== Building release binary ==="
+    cargo build --release
+
+    echo "=== Staging Flatpak filesystem ==="
+    rm -rf "$BUILD_DIR"
+    rm -rf "$REPO_DIR"
+    mkdir -p "$REPO_DIR"
+    install -Dm755 \
+        "${SCRIPT_DIR}/target/release/cosmic-applet-workspace-windows" \
+        "${BUILD_DIR}/files/bin/cosmic-applet-workspace-windows"
+    install -Dm644 \
+        "${SCRIPT_DIR}/data/${APP_ID}.desktop" \
+        "${BUILD_DIR}/files/share/applications/${APP_ID}.desktop"
+    install -Dm644 \
+        "${SCRIPT_DIR}/data/${APP_ID}.metainfo.xml" \
+        "${BUILD_DIR}/files/share/metainfo/${APP_ID}.metainfo.xml"
+    install -Dm644 \
+        "${SCRIPT_DIR}/data/icons/scalable/apps/${APP_ID}.svg" \
+        "${BUILD_DIR}/files/share/icons/hicolor/scalable/apps/${APP_ID}.svg"
+
+    cat > "$BUILD_DIR/metadata" << EOF
+[Application]
+name=${APP_ID}
+runtime=${runtime}/${arch}/${runtime_version}
+runtime-version=${runtime_version}
+sdk=${sdk}/${arch}/${runtime_version}
+command=${command}
+EOF
+
+    echo "=== Finishing Flatpak metadata ==="
+    flatpak build-finish "$BUILD_DIR" "${finish_args[@]}"
+
+    echo "=== Exporting repository ==="
+    flatpak build-export "$REPO_DIR" "$BUILD_DIR" "$BRANCH"
 }
 
 build_bundle() {
     local manifest_path="$1"
 
-    ensure_flatpak_builder
     validate_metadata
 
-    echo "=== Building Flatpak ==="
-    rm -rf "$BUILD_DIR"
-    rm -rf "$REPO_DIR"
-    mkdir -p "$REPO_DIR"
-    flatpak-builder --force-clean --repo="$REPO_DIR" "$BUILD_DIR" "$manifest_path"
+    if has_flatpak_builder; then
+        build_bundle_with_builder "$manifest_path"
+    else
+        build_bundle_manually
+    fi
 
     echo "=== Creating bundle ==="
     rm -f "$OUTPUT_FILE"
@@ -173,15 +263,20 @@ publish() {
     generate_sources
     prepare_local_source
     write_local_manifest
-    write_publish_manifest
     build_bundle "$LOCAL_MANIFEST"
 
     echo "=== Updating published repository metadata ==="
     flatpak build-update-repo "$REPO_DIR" --generate-static-deltas
-    cp "$PUBLISH_MANIFEST" "$REPO_DIR/${APP_ID}.json"
     cp "$CARGO_SOURCES" "$REPO_DIR/cargo-sources.json"
 
-    echo "Publish manifest: $PUBLISH_MANIFEST"
+    if write_publish_manifest; then
+        cp "$PUBLISH_MANIFEST" "$REPO_DIR/${APP_ID}.json"
+        echo "Publish manifest: $PUBLISH_MANIFEST"
+    else
+        echo "Skipped commit-pinned publish manifest because the git worktree is dirty." >&2
+        echo "Run './build-flatpak.sh manifest' from a clean worktree to generate it." >&2
+    fi
+
     echo "Published repository: $REPO_DIR"
 }
 
@@ -199,8 +294,8 @@ install_deps() {
         org.freedesktop.Sdk/x86_64/24.08 \
         org.freedesktop.Sdk.Extension.rust-stable/x86_64/24.08
 
-    if ! command -v flatpak-builder >/dev/null 2>&1; then
-        echo "Install flatpak-builder with your system package manager before building." >&2
+    if ! has_flatpak_builder; then
+        echo "Optional: install flatpak-builder for manifest-based local builds." >&2
     fi
 }
 
@@ -234,9 +329,9 @@ case "${1:-build}" in
         echo "  clean  - Clean build directories"
         echo "  deps   - Install Flatpak dependencies"
         echo "  sources - Generate cargo-sources.json"
-        echo "  manifest - Generate a commit-pinned publish manifest"
+        echo "  manifest - Generate a commit-pinned publish manifest (requires a clean git worktree)"
         echo "  build  - Build the Flatpak package from the local worktree"
-        echo "  publish - Build the bundle, update the local repo, and emit a publish manifest"
+        echo "  publish - Build the bundle and local repo; emits a publish manifest when the git worktree is clean"
         echo "  all    - Clean, install deps, and build"
         exit 1
         ;;
